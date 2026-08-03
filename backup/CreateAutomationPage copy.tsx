@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -12,19 +12,23 @@ import {
   CircleDollarSign,
   Coins,
   Copy,
+  Download,
+  FileSpreadsheet,
   Info,
   Loader2,
   Plus,
   RefreshCw,
   ShieldCheck,
   Trash2,
+  Upload,
   Wallet,
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AutoLayer } from "@autolayer/sdk";
 import { useSocketFi } from "@socketfi/react";
-import { rpc } from "@stellar/stellar-sdk";
+import { Address, rpc } from "@stellar/stellar-sdk";
+import * as XLSX from "xlsx";
 import { useAccount, useConnectors, useReconnect, useSignMessage } from "wagmi";
 
 import { useStates } from "../../context/StatesContext";
@@ -61,6 +65,17 @@ type RecipientRow = {
   id: string;
   address: string;
   amount: string;
+  reference?: string;
+};
+
+type RecipientImportIssue = {
+  row: number;
+  message: string;
+};
+
+type RecipientImportResult = {
+  recipients: RecipientRow[];
+  issues: RecipientImportIssue[];
 };
 
 type RebalanceRow = {
@@ -142,6 +157,36 @@ const SCHEDULE_UNITS: Array<{
 
 const MARKET_PRESETS = ["XLM-USDC", "BTC-USDC", "ETH-USDC"];
 
+const MAX_RECIPIENT_IMPORT_ROWS = 500;
+const RECIPIENT_TEMPLATE_FILENAME = "autolayer-disbursement-template.csv";
+const RECIPIENT_TEMPLATE_CSV = [
+  "address,amount,reference",
+  "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF,25.50,Payroll-001",
+  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM,10.00,Vendor-002",
+].join("\n");
+
+const RECIPIENT_HEADER_ALIASES = {
+  address: new Set([
+    "address",
+    "account",
+    "accountaddress",
+    "wallet",
+    "walletaddress",
+    "recipient",
+    "recipientaddress",
+    "destination",
+  ]),
+  amount: new Set(["amount", "value", "payment", "paymentamount"]),
+  reference: new Set([
+    "reference",
+    "ref",
+    "memo",
+    "description",
+    "note",
+    "name",
+  ]),
+};
+
 const INPUT_CLASS =
   "mt-2 h-11 w-full rounded-xl border border-[#EAECF0] bg-white px-3.5 text-sm text-[#101828] outline-none transition placeholder:text-[#98A2B3] focus:border-[#2F0FD1] focus:ring-4 focus:ring-[#EEF2FF] disabled:cursor-not-allowed disabled:bg-[#F9FAFB] disabled:text-[#98A2B3]";
 
@@ -160,6 +205,215 @@ function createId(prefix: string): string {
   }
 
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeHeader(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeImportedCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function isValidRecipientAddress(value: string): boolean {
+  try {
+    const address = Address.fromString(value.trim());
+    const normalized = address.toString();
+    return normalized.startsWith("G") || normalized.startsWith("C");
+  } catch {
+    return false;
+  }
+}
+
+function parseCsvRows(input: string): string[][] {
+  const text = input.replace(/^\uFEFF/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (quoted) {
+      if (character === '"' && text[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        field += character;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(field);
+      field = "";
+    } else if (character === "\n") {
+      row.push(field.replace(/\r$/, ""));
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+
+  if (quoted) {
+    throw new Error("The CSV contains an unclosed quoted value");
+  }
+
+  if (field.length || row.length) {
+    row.push(field.replace(/\r$/, ""));
+    rows.push(row);
+  }
+
+  return rows.filter((cells) => cells.some((cell) => cell.trim()));
+}
+
+function rowsToRecipients(rows: unknown[][]): RecipientImportResult {
+  if (!rows.length) {
+    throw new Error("The selected file does not contain any rows");
+  }
+
+  const headers = rows[0].map(normalizeHeader);
+  const findColumn = (aliases: Set<string>) =>
+    headers.findIndex((header) => aliases.has(header));
+
+  const addressColumn = findColumn(RECIPIENT_HEADER_ALIASES.address);
+  const amountColumn = findColumn(RECIPIENT_HEADER_ALIASES.amount);
+  const referenceColumn = findColumn(RECIPIENT_HEADER_ALIASES.reference);
+
+  if (addressColumn < 0 || amountColumn < 0) {
+    throw new Error('The file must contain "address" and "amount" columns');
+  }
+
+  const dataRows = rows
+    .slice(1)
+    .filter((cells) => cells.some((cell) => normalizeImportedCell(cell)));
+
+  if (!dataRows.length) {
+    throw new Error("The selected file contains headers but no recipients");
+  }
+
+  if (dataRows.length > MAX_RECIPIENT_IMPORT_ROWS) {
+    throw new Error(
+      `A file can contain at most ${MAX_RECIPIENT_IMPORT_ROWS} recipients`
+    );
+  }
+
+  const issues: RecipientImportIssue[] = [];
+  const recipients: RecipientRow[] = [];
+  const seenAddresses = new Map<string, number>();
+
+  dataRows.forEach((cells, index) => {
+    const sourceRow = index + 2;
+    const address = normalizeImportedCell(cells[addressColumn]);
+    const amount = normalizeImportedCell(cells[amountColumn]);
+    const reference =
+      referenceColumn >= 0
+        ? normalizeImportedCell(cells[referenceColumn]).slice(0, 120)
+        : "";
+
+    if (!address && !amount) return;
+
+    if (!address) {
+      issues.push({ row: sourceRow, message: "Recipient address is missing" });
+      return;
+    }
+
+    if (!isValidRecipientAddress(address)) {
+      issues.push({
+        row: sourceRow,
+        message: "Address must be a valid Stellar G… or C… address",
+      });
+      return;
+    }
+
+    if (!/^\d+(?:\.\d+)?$/.test(amount) || Number(amount) <= 0) {
+      issues.push({
+        row: sourceRow,
+        message: "Amount must be a positive decimal number",
+      });
+      return;
+    }
+
+    const normalizedAddress = address.toUpperCase();
+    const firstSeenRow = seenAddresses.get(normalizedAddress);
+
+    if (firstSeenRow) {
+      issues.push({
+        row: sourceRow,
+        message: `Duplicate recipient address (already used on row ${firstSeenRow})`,
+      });
+      return;
+    }
+
+    seenAddresses.set(normalizedAddress, sourceRow);
+    recipients.push({
+      id: createId("recipient"),
+      address,
+      amount,
+      reference: reference || undefined,
+    });
+  });
+
+  return { recipients, issues };
+}
+
+async function parseRecipientFile(file: File): Promise<RecipientImportResult> {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+
+  if (!extension || !["csv", "xlsx", "xls"].includes(extension)) {
+    throw new Error("Upload a CSV, XLSX, or XLS file");
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("The upload must be 5 MB or smaller");
+  }
+
+  if (extension === "csv") {
+    return rowsToRecipients(parseCsvRows(await file.text()));
+  }
+
+  const workbook = XLSX.read(await file.arrayBuffer(), {
+    type: "array",
+    cellDates: false,
+    raw: false,
+  });
+  const firstSheetName = workbook.SheetNames[0];
+
+  if (!firstSheetName) {
+    throw new Error("The workbook does not contain a worksheet");
+  }
+
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(
+    workbook.Sheets[firstSheetName],
+    { header: 1, defval: "", raw: false }
+  );
+
+  return rowsToRecipients(rows);
+}
+
+function downloadRecipientTemplate(): void {
+  const blob = new Blob([RECIPIENT_TEMPLATE_CSV], {
+    type: "text/csv;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = RECIPIENT_TEMPLATE_FILENAME;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function transactionHash(response: any): string | undefined {
@@ -1120,6 +1374,12 @@ export default function CreateAutomationPage() {
   const [recipients, setRecipients] = useState<RecipientRow[]>([
     { id: createId("recipient"), address: "", amount: "" },
   ]);
+  const recipientFileInputRef = useRef<HTMLInputElement>(null);
+  const [recipientImportName, setRecipientImportName] = useState("");
+  const [recipientImportIssues, setRecipientImportIssues] = useState<
+    RecipientImportIssue[]
+  >([]);
+  const [isImportingRecipients, setIsImportingRecipients] = useState(false);
 
   const [rebalanceAssets, setRebalanceAssets] = useState<RebalanceRow[]>([
     { id: createId("allocation"), asset: "", weight: "50" },
@@ -1450,11 +1710,32 @@ export default function CreateAutomationPage() {
         throw new Error("Add at least one recipient and amount");
       }
 
-      for (const recipient of validRecipients) {
+      if (validRecipients.length > MAX_RECIPIENT_IMPORT_ROWS) {
+        throw new Error(
+          `Disbursement supports at most ${MAX_RECIPIENT_IMPORT_ROWS} recipients`
+        );
+      }
+
+      const seenRecipientAddresses = new Set<string>();
+
+      for (const [index, recipient] of validRecipients.entries()) {
+        const normalizedAddress = recipient.address.trim().toUpperCase();
+
+        if (!isValidRecipientAddress(normalizedAddress)) {
+          throw new Error(
+            `Recipient ${index + 1} must be a valid Stellar G… or C… address`
+          );
+        }
+
+        if (seenRecipientAddresses.has(normalizedAddress)) {
+          throw new Error(`Recipient ${index + 1} uses a duplicate address`);
+        }
+
+        seenRecipientAddresses.add(normalizedAddress);
         validatePositiveDecimalAmount(
           recipient.amount,
           selectedInputToken?.decimals ?? 7,
-          "Recipient amount"
+          `Recipient ${index + 1} amount`
         );
       }
     }
@@ -1788,15 +2069,49 @@ export default function CreateAutomationPage() {
         firstRunAt: resolvedSchedule.firstRunAt,
       });
 
-      console.log("the activation", activated);
-
-      // if (!activationTransactionHash) {
-      //   throw new Error(
-      //     "AutoLayer activated the automation but returned no activation transaction hash"
-      //   );
-      // }
-
       const policy = proposal.sessionPolicyInput;
+
+      console.log(
+        "the register session body",
+        {
+          walletAddress: wallet,
+          network,
+          policyIdHex: proposal.expectedPolicyIdHex,
+          delegatePublicKey: proposal.delegatePublicKey,
+          label: name.trim(),
+          validAfterLedger: policy.valid_after_ledger,
+          expiresAtLedger: policy.expires_at_ledger,
+          maxUses: policy.max_uses ?? null,
+          allowedInvocations:
+            proposal.policyMetadata?.allowedInvocations ||
+            policy.permissions ||
+            [],
+          spendLimits:
+            proposal.policyMetadata?.spendLimits || policy.spend_limits || [],
+          automationId: proposal.automationId,
+          automationType: type,
+          schedule: {
+            kind: "INTERVAL",
+            expression: resolvedSchedule.expression,
+            timezone: "UTC",
+          },
+          strategy,
+          createTransactionHash: sessionTransaction,
+          metadata: {
+            scheduling: resolvedSchedule,
+            x402: {
+              amount:
+                prepared?.requirements?.amount ||
+                prepared?.requirements?.maxAmountRequired ||
+                proposal?.price?.amount,
+              asset: prepared?.requirements?.asset || proposal?.price?.asset,
+              payTo: prepared?.requirements?.payTo || proposal?.price?.payTo,
+              paymentSessionId: prepared.paymentSessionId,
+            },
+          },
+        },
+        accessToken
+      );
 
       await api.registerSession(
         {
@@ -1879,6 +2194,49 @@ export default function CreateAutomationPage() {
       toast.error(message);
     } finally {
       setBusyAction("");
+    }
+  }
+
+  async function handleRecipientFile(file?: File): Promise<void> {
+    if (!file) return;
+
+    setIsImportingRecipients(true);
+    setRecipientImportIssues([]);
+    setError("");
+
+    try {
+      const result = await parseRecipientFile(file);
+
+      if (result.issues.length) {
+        setRecipientImportIssues(result.issues);
+        throw new Error(
+          `${result.issues.length} row${
+            result.issues.length === 1 ? "" : "s"
+          } could not be imported. Fix the listed rows and upload again.`
+        );
+      }
+
+      if (!result.recipients.length) {
+        throw new Error("The file did not contain any valid recipients");
+      }
+
+      setRecipients(result.recipients);
+      setRecipientImportName(file.name);
+      toast.success(
+        `${result.recipients.length} recipient${
+          result.recipients.length === 1 ? "" : "s"
+        } imported`
+      );
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Unable to import recipients";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsImportingRecipients(false);
+      if (recipientFileInputRef.current) {
+        recipientFileInputRef.current.value = "";
+      }
     }
   }
 
@@ -2316,39 +2674,134 @@ export default function CreateAutomationPage() {
                     />
 
                     <div>
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                           <p className="text-sm font-medium text-[#344054]">
                             Recipients
                           </p>
-                          <p className="mt-1 text-xs text-[#667085]">
-                            Add one recipient and amount per row.
+                          <p className="mt-1 text-xs leading-5 text-[#667085]">
+                            Enter recipients manually or replace the list by
+                            uploading a CSV or Excel file.
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRecipients((current) => [
-                              ...current,
-                              {
-                                id: createId("recipient"),
-                                address: "",
-                                amount: "",
-                              },
-                            ])
-                          }
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#EAECF0] bg-white px-3 text-xs font-medium text-[#344054] shadow-sm transition hover:bg-[#F9FAFB]"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          Add recipient
-                        </button>
+
+                        <div className="flex flex-wrap gap-2">
+                          <input
+                            ref={recipientFileInputRef}
+                            type="file"
+                            accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            className="hidden"
+                            onChange={(event) =>
+                              void handleRecipientFile(event.target.files?.[0])
+                            }
+                          />
+                          <button
+                            type="button"
+                            onClick={downloadRecipientTemplate}
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#EAECF0] bg-white px-3 text-xs font-medium text-[#344054] shadow-sm transition hover:bg-[#F9FAFB]"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            CSV template
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isImportingRecipients}
+                            onClick={() =>
+                              recipientFileInputRef.current?.click()
+                            }
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#BDB4FE] bg-[#F4F3FF] px-3 text-xs font-semibold text-[#2F0FD1] transition hover:bg-[#EEF2FF] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isImportingRecipients ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Upload className="h-3.5 w-3.5" />
+                            )}
+                            Upload CSV / Excel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRecipients((current) => [
+                                ...current,
+                                {
+                                  id: createId("recipient"),
+                                  address: "",
+                                  amount: "",
+                                },
+                              ])
+                            }
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#EAECF0] bg-white px-3 text-xs font-medium text-[#344054] shadow-sm transition hover:bg-[#F9FAFB]"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add recipient
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 rounded-2xl border border-[#D9D6FE] bg-[#F9F8FF] p-4">
+                        <div className="flex items-start gap-3">
+                          <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-[#5925DC]" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-[#344054]">
+                              File format
+                            </p>
+                            <p className="mt-1 text-xs leading-5 text-[#667085]">
+                              Required columns:{" "}
+                              <span className="font-mono">address</span> and{" "}
+                              <span className="font-mono">amount</span>.
+                              Optional:{" "}
+                              <span className="font-mono">reference</span>. The
+                              first worksheet is imported, and uploads are
+                              limited to {MAX_RECIPIENT_IMPORT_ROWS} recipients
+                              and 5 MB.
+                            </p>
+                            {recipientImportName ? (
+                              <p className="mt-2 truncate text-xs font-medium text-[#027A48]">
+                                Imported: {recipientImportName} ·{" "}
+                                {recipients.length} recipients
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+
+                      {recipientImportIssues.length ? (
+                        <div className="mt-3 rounded-2xl border border-[#FECDCA] bg-[#FEF3F2] p-4">
+                          <p className="text-sm font-semibold text-[#B42318]">
+                            Import errors
+                          </p>
+                          <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs leading-5 text-[#B42318]">
+                            {recipientImportIssues.slice(0, 20).map((issue) => (
+                              <li key={`${issue.row}-${issue.message}`}>
+                                Row {issue.row}: {issue.message}
+                              </li>
+                            ))}
+                          </ul>
+                          {recipientImportIssues.length > 20 ? (
+                            <p className="mt-2 text-xs text-[#B42318]">
+                              Plus {recipientImportIssues.length - 20} more
+                              errors.
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#F8FAFC] px-3 py-2 text-xs text-[#667085]">
+                        <span>
+                          {recipients.length} recipient
+                          {recipients.length === 1 ? "" : "s"}
+                        </span>
+                        <span className="font-semibold text-[#344054]">
+                          Total: {totalDisbursement || 0}{" "}
+                          {selectedInputToken?.symbol || "tokens"}
+                        </span>
                       </div>
 
                       <div className="mt-3 space-y-3">
                         {recipients.map((recipient, index) => (
                           <div
                             key={recipient.id}
-                            className="grid gap-3 rounded-2xl border border-[#EAECF0] bg-[#FCFCFD] p-3 sm:grid-cols-[1fr_170px_44px]"
+                            className="grid gap-3 rounded-2xl border border-[#EAECF0] bg-[#FCFCFD] p-3 lg:grid-cols-[minmax(0,1fr)_160px_minmax(160px,0.55fr)_44px]"
                           >
                             <input
                               value={recipient.address}
@@ -2376,6 +2829,24 @@ export default function CreateAutomationPage() {
                               }}
                               placeholder="Amount"
                               className="h-11 rounded-xl border border-[#EAECF0] bg-white px-3 text-sm text-[#101828] outline-none transition focus:border-[#2F0FD1] focus:ring-4 focus:ring-[#EEF2FF]"
+                            />
+                            <input
+                              value={recipient.reference || ""}
+                              maxLength={120}
+                              onChange={(event) =>
+                                setRecipients((current) =>
+                                  current.map((item) =>
+                                    item.id === recipient.id
+                                      ? {
+                                          ...item,
+                                          reference: event.target.value,
+                                        }
+                                      : item
+                                  )
+                                )
+                              }
+                              placeholder="Reference (optional)"
+                              className="h-11 min-w-0 rounded-xl border border-[#EAECF0] bg-white px-3 text-sm text-[#101828] outline-none transition focus:border-[#2F0FD1] focus:ring-4 focus:ring-[#EEF2FF]"
                             />
                             <button
                               type="button"

@@ -132,7 +132,7 @@ function publicDepositUrl(
   tenant: SocketFiTenant,
   walletAddress: string
 ): string {
-  return `https://${tenant?.hostname}/${walletAddress}`;
+  return `https://${tenant?.hostname}/deposit/${walletAddress}`;
 }
 
 function transactionExplorerUrl(

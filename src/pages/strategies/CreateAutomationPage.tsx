@@ -61,6 +61,27 @@ type TokenOption = {
   source: "wallet" | "watchlist";
 };
 
+type WalletTokenBalance = {
+  symbol: string;
+  contract: string;
+  decimals: number;
+  icon: string | null;
+  atomicBalance: string | null;
+  balance: string | null;
+  balanceStatus: "fresh" | "unavailable";
+  balanceError?: string;
+};
+
+type WalletTokenListResponse = {
+  success: boolean;
+  network: Network;
+  walletAddress: string;
+  count: number;
+  tokens: WalletTokenBalance[];
+  fetchedAt: string;
+  error?: string;
+};
+
 type RecipientRow = {
   id: string;
   address: string;
@@ -186,6 +207,12 @@ const RECIPIENT_HEADER_ALIASES = {
     "name",
   ]),
 };
+
+const SOCKETFI_API_ORIGIN = (
+  import.meta.env.VITE_SERVER_DIRECT_URL ||
+  import.meta.env.VITE_SOCKETFI_DIRECT_API_URL ||
+  "http://localhost:3200"
+).replace(/\/$/, "");
 
 const INPUT_CLASS =
   "mt-2 h-11 w-full rounded-xl border border-[#EAECF0] bg-white px-3.5 text-sm text-[#101828] outline-none transition placeholder:text-[#98A2B3] focus:border-[#2F0FD1] focus:ring-4 focus:ring-[#EEF2FF] disabled:cursor-not-allowed disabled:bg-[#F9FAFB] disabled:text-[#98A2B3]";
@@ -500,7 +527,7 @@ function dedupeTokens(
       map.set(token.address, {
         ...token,
         ...existing,
-        balance: existing.balance !== "0" ? existing.balance : token.balance,
+        balance: existing.balance,
         source: "wallet",
       });
     } else {
@@ -1315,11 +1342,14 @@ export default function CreateAutomationPage() {
     tokenList = [],
     watchlistTokens = [],
     prices = {},
+    setAllTokens,
+    triggerUpdate,
   } = useStates();
 
   const network = selectedNetwork as Network;
   const accessToken = activeSession?.accessToken || "";
   const wallet = activeSession?.userProfile?.address?.[network] || "";
+  const username = activeSession?.userProfile?.username || "";
   const authMethod = getSocketFiAuthMethod(activeSession);
   const stellarSigner = getSocketFiStellarSigner(activeSession);
   const evmSigner = getSocketFiEvmSigner(activeSession);
@@ -1400,6 +1430,109 @@ export default function CreateAutomationPage() {
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
+  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
+  const [balanceRefreshError, setBalanceRefreshError] = useState("");
+  const [balancesFetchedAt, setBalancesFetchedAt] = useState<string | null>(
+    null
+  );
+  const balanceRequestIdRef = useRef(0);
+
+  const loadWalletTokenBalances = useCallback(
+    async (showToast = false): Promise<void> => {
+      if (!username || !wallet || !network) {
+        return;
+      }
+
+      const requestId = ++balanceRequestIdRef.current;
+      setIsLoadingBalances(true);
+      setBalanceRefreshError("");
+
+      try {
+        const params = new URLSearchParams({
+          network,
+          username,
+          walletAddress: wallet,
+        });
+
+        const response = await fetch(
+          `${SOCKETFI_API_ORIGIN}/api/wallet/tokens?${params.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        const payload = (await response.json().catch(() => ({}))) as
+          | WalletTokenListResponse
+          | { error?: string; message?: string };
+
+        if (!response.ok) {
+          throw new Error(
+            ("error" in payload && payload.error) ||
+              ("message" in payload && payload.message) ||
+              `Unable to load balances (${response.status})`
+          );
+        }
+
+        if (requestId !== balanceRequestIdRef.current) {
+          return;
+        }
+
+        const data = payload as WalletTokenListResponse;
+        const walletTokens = Array.isArray(data.tokens) ? data.tokens : [];
+
+        const normalizedTokens = walletTokens.map((token) => ({
+          id: token.contract,
+          address: token.contract,
+          contract: token.contract,
+          contractId: token.contract,
+          code: token.symbol,
+          symbol: token.symbol,
+          name: token.symbol,
+          decimals: token.decimals,
+          icon: token.icon,
+          balance: token.balance ?? "0",
+          atomicBalance: token.atomicBalance,
+          balanceStatus: token.balanceStatus,
+          balanceError: token.balanceError,
+        }));
+
+        setAllTokens?.(normalizedTokens);
+        setBalancesFetchedAt(data.fetchedAt || new Date().toISOString());
+        triggerUpdate?.();
+
+        if (showToast) {
+          toast.success("Wallet balances refreshed");
+        }
+      } catch (cause) {
+        if (requestId !== balanceRequestIdRef.current) {
+          return;
+        }
+
+        const message =
+          cause instanceof Error
+            ? cause.message
+            : "Unable to refresh wallet balances";
+
+        setBalanceRefreshError(message);
+
+        if (showToast) {
+          toast.error(message);
+        }
+      } finally {
+        if (requestId === balanceRequestIdRef.current) {
+          setIsLoadingBalances(false);
+        }
+      }
+    },
+    [network, setAllTokens, toast, triggerUpdate, username, wallet]
+  );
+
+  useEffect(() => {
+    void loadWalletTokenBalances(false);
+  }, [loadWalletTokenBalances]);
 
   useEffect(() => {
     if (!assetIn && tokens.length) {
@@ -2340,16 +2473,65 @@ export default function CreateAutomationPage() {
               </p>
             </div>
 
-            <div className="rounded-2xl border border-[#EAECF0] bg-[#FCFCFD] px-4 py-3">
-              <p className="text-[11px] text-[#667085]">
-                Connected SocketFi wallet
-              </p>
-              <div className="mt-1 flex items-center gap-2">
-                <Wallet className="h-4 w-4 text-[#667085]" />
-                <p className="font-mono text-xs font-semibold text-[#101828]">
-                  {shorten(wallet, 12, 10)}
-                </p>
+            <div className="min-w-[300px] rounded-2xl border border-[#EAECF0] bg-[#FCFCFD] px-4 py-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[11px] text-[#667085]">
+                    Connected SocketFi wallet
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Wallet className="h-4 w-4 shrink-0 text-[#667085]" />
+                    <p
+                      title={wallet}
+                      className="truncate font-mono text-xs font-semibold text-[#101828]"
+                    >
+                      {shorten(wallet, 12, 10)}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isLoadingBalances || !wallet || !username}
+                  onClick={() => void loadWalletTokenBalances(true)}
+                  aria-label="Refresh wallet balances"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#EAECF0] bg-white text-[#667085] shadow-sm transition hover:bg-[#F9FAFB] hover:text-[#101828] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={classNames(
+                      "h-4 w-4",
+                      isLoadingBalances && "animate-spin"
+                    )}
+                  />
+                </button>
               </div>
+
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#EAECF0] pt-3">
+                <span className="text-[11px] text-[#667085]">
+                  {isLoadingBalances
+                    ? "Loading balances…"
+                    : `${tokens.length} token${
+                        tokens.length === 1 ? "" : "s"
+                      } loaded`}
+                </span>
+
+                {balancesFetchedAt ? (
+                  <span className="text-[11px] text-[#98A2B3]">
+                    Updated{" "}
+                    {new Date(balancesFetchedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                ) : null}
+              </div>
+
+              {balanceRefreshError ? (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-[#FECDCA] bg-[#FEF3F2] px-3 py-2 text-xs text-[#B42318]">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{balanceRefreshError}</span>
+                </div>
+              ) : null}
             </div>
           </div>
 
