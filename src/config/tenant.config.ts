@@ -42,27 +42,41 @@ const TENANTS: Record<"mainnet" | "testnet", SocketFiTenant> = {
     apiUrl: API_URL,
     explorerUrl:
       import.meta.env.VITE_TESTNET_EXPLORER_URL?.trim() ||
-      "https://socketfi.app/explorer",
+      "https://testnet.socketfi.app/explorer",
   },
 };
+
+const MAINNET_HOSTS = new Set([
+  normalizeHostname(MAINNET_HOST),
+  "www.socketfi.app",
+]);
+
+const TESTNET_HOSTS = new Set([
+  normalizeHostname(TESTNET_HOST),
+  "www.testnet.socketfi.app",
+]);
+
+function resolveLocalTenant(): SocketFiTenant {
+  return window.location.port === "5174" ? TENANTS.mainnet : TENANTS.testnet;
+}
 
 export function resolveSocketFiTenant(
   hostname: string = window.location.hostname
 ): SocketFiTenant {
   const normalized = normalizeHostname(hostname);
 
-  if (normalized === TENANTS.mainnet.hostname) {
+  if (MAINNET_HOSTS.has(normalized)) {
     return TENANTS.mainnet;
   }
 
-  if (normalized === TENANTS.testnet.hostname) {
+  if (TESTNET_HOSTS.has(normalized)) {
     return TENANTS.testnet;
   }
 
   /*
-   * Local-development mapping.
+   * Local development.
    *
-   * localhost:5173 -> TESTNET by default
+   * localhost:5173 -> TESTNET
    * localhost:5174 -> PUBLIC
    */
   if (
@@ -70,7 +84,14 @@ export function resolveSocketFiTenant(
     normalized === "127.0.0.1" ||
     normalized === "::1"
   ) {
-    return window.location.port === "5174" ? TENANTS.mainnet : TENANTS.testnet;
+    return resolveLocalTenant();
+  }
+
+  /*
+   * Vercel preview deployments default to TESTNET.
+   */
+  if (normalized.endsWith(".vercel.app")) {
+    return TENANTS.testnet;
   }
 
   throw new Error(`Unsupported SocketFi hostname: ${normalized}`);
