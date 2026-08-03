@@ -1,0 +1,29 @@
+*** PublicDepositPage.tsx
+@@
+-import AllbridgeDeposit from "./AllbridgeDeposit";
++import NearIntentDeposit from "./near-intents/NearIntentDeposit";
+@@
+-  const [fundingMethod, setFundingMethod] = useState<"stellar" | "allbridge">(
++  const [fundingMethod, setFundingMethod] = useState<"stellar" | "near-intents">(
+     "stellar"
+   );
+@@
+-            onClick={() => setFundingMethod("allbridge")}
++            onClick={() => setFundingMethod("near-intents")}
+@@
+-              fundingMethod === "allbridge"
++              fundingMethod === "near-intents"
+@@
+-            EVM via Allbridge
++            EVM via NEAR Intents
+@@
+-                  Fund this smart account from an EVM wallet through Allbridge
+-                  Core.
++                  Bridge native USDC from Ethereum, Base, Arbitrum, or Polygon
++                  into this SocketFi smart account through NEAR Intents.
+@@
+-                      <AllbridgeDeposit
++                      <NearIntentDeposit
+                         destinationAccount={address}
+                         network={network}
+                       />

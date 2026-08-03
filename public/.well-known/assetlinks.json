@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.socket.fi",
+      "sha256_cert_fingerprints": [
+        "9D:40:66:7F:A1:C1:E3:C8:99:73:A1:DD:C4:75:6B:ED:F3:D2:83:C7:DF:D6:01:BA:C5:39:0A:DD:ED:02:6D:0E"
+      ]
+    }
+  }
+]

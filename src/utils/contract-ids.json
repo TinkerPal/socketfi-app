@@ -1,0 +1,73 @@
+{
+  "WALLET": {
+    "PUBLIC": {
+      "address": ""
+    },
+
+    "FUTURENET": {
+      "address": "CAQVDEVZP65PW6BVPN75E5TPD4EKMF4WKIKDMYFGEYG7MLGCZYBTZMA6"
+    },
+
+    "TESTNET": {
+      "name": "TestnetTokenA",
+      "address": ""
+    }
+  },
+
+  "QUEST": {
+    "PUBLIC": {
+      "address": "CD56K3BOQRG7FRKQ4LLJX72V2UMLDGQKTIEJJYP4EBHTJO4UUPWFNJCU"
+    },
+    "FUTURENET": {
+      "address": ""
+    },
+
+    "TESTNET": {
+      "address": ""
+    }
+  },
+
+  "TOKENS": {
+    "PUBLIC": [
+      {
+        "symbol": "XLM",
+        "address": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+      },
+      {
+        "name": "Enter Token ID",
+        "symbol": "Enter Token ID",
+        "address": "",
+        "amount": "",
+        "price": "0"
+      }
+    ],
+    "FUTURENET": [
+      {
+        "symbol": "XLM",
+        "address": "CB64D3G7SM2RTH6JSGG34DDTFTQ5CFDKVDZJZSODMCX4NJ2HV2KN7OHT"
+      }
+    ],
+
+    "TESTNET": [
+      {
+        "symbol": "XLM",
+        "address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "amount": "",
+        "balance": "",
+        "price": "0"
+      },
+      {
+        "name": "Enter Token ID",
+        "symbol": "Enter Token ID",
+        "address": "",
+        "amount": "",
+        "price": "0"
+      }
+    ]
+  },
+
+  "MASTER_CONTRACT": {
+    "TESTNET": "CDQWWJINUFNZBJHV4YBHOCP37UJ7CCAJLI4CMSXIS377OGFRCNNMVXNQ",
+    "PUBLIC": "CAVQPG5H3CBKS2DUHAVQONNEIWR2EXL6VG5GCVZPWQJSDQ3S2YJEIQUJ"
+  }
+}
