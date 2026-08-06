@@ -1,14 +1,25 @@
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { useDisconnect } from "wagmi";
 import {
+  Activity,
   Bot,
-  CircleGauge,
+  Check,
+  Copy,
   Download,
+  ExternalLink,
   Grid2X2,
-  KeyRound,
+  LayoutDashboard,
   LogOut,
   Settings,
-  Wallet,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
@@ -16,6 +27,7 @@ import { v4 as uuidv4 } from "uuid";
 import { startAuthentication } from "@simplewebauthn/browser";
 
 import Logo from "../assets/socketLogo.svg";
+import NetworkIndicator from "../components/NetworkIndicator";
 import { useStates } from "../context/StatesContext";
 import { removeAuthSession } from "../storage/indexdb-session-store";
 import { removeAuthSession as removeLocalAuthSession } from "../utils/localStorage";
@@ -24,81 +36,58 @@ import { postRequest } from "../utils/fetch-functions";
 type Network = "TESTNET" | "PUBLIC";
 
 interface NavigationItem {
-  id: string;
+  id: "overview" | "activity" | "dapps" | "automations";
   label: string;
   icon: ComponentType<{ className?: string }>;
   link: string;
-  badge?: {
-    text: string;
-    tone: "indigo" | "slate";
-  };
-}
-
-interface NavigationGroup {
-  title: string;
-  items: NavigationItem[];
 }
 
 interface SideNavBarProps {
   sidebarIsOpen: boolean;
   setSidebarIsOpen: (open: boolean) => void;
   onOpenCreate: () => void;
+  onOpenQuickSettings: () => void;
+  returnFocusRef: RefObject<HTMLButtonElement | null>;
 }
 
 interface SidebarNavProps {
   onClose: () => void;
   onOpenCreate: () => void;
+  onOpenQuickSettings: () => void;
   onLogout: () => Promise<void>;
   onUpgrade: () => Promise<void>;
   isUpgrading: boolean;
 }
 
-const navigationGroups: NavigationGroup[] = [
+const navigationItems: NavigationItem[] = [
   {
-    title: "Wallet",
-    items: [
-      {
-        id: "wallet",
-        label: "My Wallet",
-        icon: Wallet,
-        link: "/",
-      },
-      // {
-      //   id: "explorer",
-      //   label: "Bridge Explorer",
-      //   icon: CircleGauge,
-      //   link: "/explorer",
-      //   badge: {
-      //     text: "Public",
-      //     tone: "slate",
-      //   },
-      // },
-      {
-        id: "dapps",
-        label: "dApps",
-        icon: Grid2X2,
-        link: "/dapps",
-      },
-    ],
+    id: "overview",
+    label: "Overview",
+    icon: LayoutDashboard,
+    link: "/",
   },
   {
-    title: "Advanced",
-    items: [
-      // {
-      //   id: "sessions",
-      //   label: "Sessions",
-      //   icon: KeyRound,
-      //   link: "/sessions",
-      // },
-      {
-        id: "strategies",
-        label: "Strategies & Automation",
-        icon: Bot,
-        link: "/automations",
-      },
-    ],
+    id: "activity",
+    label: "Activity",
+    icon: Activity,
+    link: "/#activity",
+  },
+  {
+    id: "dapps",
+    label: "dApps",
+    icon: Grid2X2,
+    link: "/dapps",
+  },
+  {
+    id: "automations",
+    label: "Automations",
+    icon: Bot,
+    link: "/automations",
   },
 ];
+
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function classNames(
   ...classes: Array<string | false | null | undefined>
@@ -119,187 +108,244 @@ function getWalletAddress(
   return session?.userProfile?.address?.[network] || null;
 }
 
+function maskAddress(address: string, visible = 7) {
+  if (address.length <= visible * 2 + 3) return address;
+  return `${address.slice(0, visible)}…${address.slice(-visible)}`;
+}
+
+function focusTrap(event: ReactKeyboardEvent<HTMLElement>) {
+  if (event.key !== "Tab") return;
+  const elements = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)
+  );
+  if (!elements.length) return;
+  const first = elements[0];
+  const last = elements[elements.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function SidebarNav({
   onClose,
   onOpenCreate,
+  onOpenQuickSettings,
   onLogout,
   onUpgrade,
   isUpgrading,
 }: SidebarNavProps) {
-  const { activeSession, versionInfo } = useStates();
-
+  const { activeSession, selectedNetwork, toast, versionInfo } = useStates();
+  const location = useLocation();
+  const [copied, setCopied] = useState(false);
+  const network = selectedNetwork as Network;
+  const accountAddress = getWalletAddress(activeSession, network) || "";
   const isAuthenticated = Boolean(activeSession);
+  const bridgeExplorerUrl =
+    import.meta.env.VITE_CCTP_EXPLORER_URL?.trim() || "/explorer";
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  function itemIsActive(item: NavigationItem) {
+    if (item.id === "overview") {
+      return location.pathname === "/" && location.hash !== "#activity";
+    }
+    if (item.id === "activity") {
+      return location.pathname === "/" && location.hash === "#activity";
+    }
+    if (item.id === "dapps") {
+      return location.pathname.startsWith("/dapps");
+    }
+    return location.pathname.startsWith("/automations");
+  }
+
+  function buildExplorerUrl(address: string) {
+    const stellarNetwork = network === "PUBLIC" ? "public" : "testnet";
+    return `https://stellar.expert/explorer/${stellarNetwork}/contract/${address}`;
+  }
+
+  async function copyAddress() {
+    if (!accountAddress) return;
+    try {
+      await navigator.clipboard.writeText(accountAddress);
+      setCopied(true);
+      toast.success("Smart account ID copied.");
+    } catch (error) {
+      console.error("[sidebar/copy-address]", error);
+      toast.error("Unable to copy the account ID.");
+    }
+  }
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="hidden border-b border-slate-200 px-4 pb-4 lg:block">
+      <div className="hidden px-2 pb-5 lg:block">
         <NavLink
           to="/"
-          className="inline-flex items-center"
-          aria-label="SocketFi Wallet"
+          className="inline-flex rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
+          aria-label="SocketFi Overview"
         >
           <img src={Logo} alt="SocketFi" className="h-10 w-auto" />
         </NavLink>
       </div>
 
-      <div className="mt-5">
-        {isAuthenticated ? (
-          <button
-            type="button"
-            onClick={() => void onLogout()}
-            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300"
-          >
-            <LogOut className="h-4.5 w-4.5" />
-            Disconnect
-          </button>
-        ) : (
+      {isAuthenticated ? (
+        <nav className="flex-1" aria-label="Primary navigation">
+          <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+            Workspace
+          </p>
+          <div className="mt-2 space-y-1">
+            {navigationItems.map((item) => {
+              const Icon = item.icon;
+              const active = itemIsActive(item);
+              return (
+                <NavLink
+                  key={item.id}
+                  to={item.link}
+                  onClick={onClose}
+                  aria-current={active ? "page" : undefined}
+                  className={classNames(
+                    "group flex min-h-11 items-center rounded-[var(--radius-control)] border px-3 py-2.5 text-sm font-semibold outline-none transition-colors motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]",
+                    active
+                      ? "border-[var(--color-border-strong)] bg-[var(--color-surface-subtle)] text-[var(--color-text-primary)] shadow-sm"
+                      : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text-primary)]"
+                  )}
+                >
+                  <Icon
+                    className={classNames(
+                      "mr-3 h-5 w-5 shrink-0",
+                      active
+                        ? "text-[var(--color-action-primary)]"
+                        : "text-[var(--color-text-muted)] group-hover:text-[var(--color-text-secondary)]"
+                    )}
+                  />
+                  <span className="truncate">{item.label}</span>
+                </NavLink>
+              );
+            })}
+          </div>
+        </nav>
+      ) : (
+        <div className="flex flex-1 flex-col justify-center rounded-[var(--radius-panel)] border border-[var(--color-border-default)] bg-[var(--color-surface-subtle)] p-4 text-center">
+          <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+            Access your SocketFi account
+          </p>
+          <p className="mt-2 text-xs leading-5 text-[var(--color-text-secondary)]">
+            Sign in or create an account to view balances, activity, and automations.
+          </p>
           <button
             type="button"
             onClick={() => {
               onClose();
               onOpenCreate();
             }}
-            className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            className="mt-4 inline-flex min-h-11 items-center justify-center rounded-[var(--radius-control)] bg-[var(--color-action-primary)] px-4 text-sm font-semibold text-[var(--color-text-inverse)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
           >
-            Create account or log in
+            Access account
           </button>
-        )}
-      </div>
-
-      <nav className="mt-8 flex-1 space-y-7" aria-label="Primary navigation">
-        {navigationGroups
-          .filter((group) => group.title !== "Advanced" || isAuthenticated)
-          .map((group) => (
-            <div key={group.title}>
-              <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                {group.title}
-              </p>
-
-              <div className="mt-2 space-y-1">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <NavLink
-                      key={item.id}
-                      to={item.link}
-                      end={item.link === "/"}
-                      onClick={onClose}
-                      className={({ isActive }) =>
-                        classNames(
-                          "group flex min-h-11 items-center rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                          isActive
-                            ? "bg-slate-950 text-white shadow-sm"
-                            : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
-                        )
-                      }
-                    >
-                      {({ isActive }) => (
-                        <>
-                          <Icon
-                            className={classNames(
-                              "mr-3 h-5 w-5 shrink-0",
-                              isActive
-                                ? "text-white"
-                                : "text-slate-400 group-hover:text-slate-700"
-                            )}
-                          />
-
-                          <span className="truncate">{item.label}</span>
-
-                          {item.badge ? (
-                            <span
-                              className={classNames(
-                                "ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase",
-                                item.badge.tone === "indigo"
-                                  ? "bg-indigo-50 text-indigo-700"
-                                  : "bg-slate-200 text-slate-700"
-                              )}
-                            >
-                              {item.badge.text}
-                            </span>
-                          ) : null}
-                        </>
-                      )}
-                    </NavLink>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-      </nav>
+        </div>
+      )}
 
       {isAuthenticated ? (
-        <div className="mt-8 border-t border-slate-200 pt-5">
+        <div className="mt-6 space-y-3 border-t border-[var(--color-border-default)] pt-5">
           <NavLink
             to="/settings"
             onClick={onClose}
             className={({ isActive }) =>
               classNames(
-                "group flex min-h-11 items-center rounded-xl px-3 py-2.5 text-sm font-medium transition",
+                "group flex min-h-11 items-center rounded-[var(--radius-control)] border px-3 py-2.5 text-sm font-semibold outline-none transition-colors motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]",
                 isActive
-                  ? "bg-slate-950 text-white"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                  ? "border-[var(--color-border-strong)] bg-[var(--color-surface-subtle)] text-[var(--color-text-primary)]"
+                  : "border-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-text-primary)]"
               )
             }
           >
-            {({ isActive }) => (
-              <>
-                <Settings
-                  className={classNames(
-                    "mr-3 h-5 w-5",
-                    isActive ? "text-white" : "text-slate-400"
-                  )}
-                />
-                Account settings
-              </>
-            )}
+            <Settings className="mr-3 h-5 w-5 text-[var(--color-text-muted)]" />
+            Settings
           </NavLink>
 
-          <div className="mt-4 rounded-2xl bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                  Wallet version
+          <div className="rounded-[var(--radius-card)] border border-[var(--color-border-default)] bg-[var(--color-surface-subtle)] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                  Smart account
                 </p>
-                <p className="mt-1 text-sm font-semibold text-slate-800">
-                  {versionInfo?.needUpdate ? "Update available" : "Up to date"}
+                <p className="mt-1 truncate font-mono text-xs font-semibold text-[var(--color-text-primary)]" title={accountAddress}>
+                  {maskAddress(accountAddress)}
                 </p>
               </div>
-
-              <span
-                className={classNames(
-                  "h-2.5 w-2.5 rounded-full",
-                  versionInfo?.needUpdate ? "bg-amber-400" : "bg-emerald-500"
-                )}
-                aria-hidden="true"
-              />
+              <NetworkIndicator compact />
             </div>
 
-            {versionInfo?.needUpdate ? (
+            <div className="mt-3 grid grid-cols-4 gap-2">
               <button
                 type="button"
-                onClick={() => void onUpgrade()}
-                disabled={isUpgrading}
-                className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void copyAddress()}
+                aria-label={copied ? "Account address copied" : "Copy account address"}
+                className="inline-flex min-h-11 items-center justify-center rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-surface-subtle)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
               >
-                <Download className="h-4 w-4" />
-                {isUpgrading ? "Updating…" : "Update wallet"}
+                {copied ? <Check className="h-4 w-4 text-[var(--color-success)]" /> : <Copy className="h-4 w-4" />}
               </button>
-            ) : null}
+              <a
+                href={buildExplorerUrl(accountAddress)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open account in Stellar Expert"
+                className="inline-flex min-h-11 items-center justify-center rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-surface-subtle)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+              <a
+                href={bridgeExplorerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open Bridge Explorer"
+                className="inline-flex min-h-11 items-center justify-center rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-surface-subtle)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
+              >
+                <Activity className="h-4 w-4" />
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenQuickSettings();
+                }}
+                aria-label="Open Quick Settings"
+                className="inline-flex min-h-11 items-center justify-center rounded-[var(--radius-control)] border border-[var(--color-border-default)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-surface-subtle)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </button>
+            </div>
           </div>
+
+          {versionInfo?.needUpdate ? (
+            <button
+              type="button"
+              onClick={() => void onUpgrade()}
+              disabled={isUpgrading}
+              className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[var(--radius-control)] border border-[var(--color-warning-border)] bg-[var(--color-warning-surface)] px-3 text-sm font-semibold text-[var(--color-warning)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)] disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" />
+              {isUpgrading ? "Updating…" : "Update wallet"}
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => void onLogout()}
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[var(--radius-control)] px-3 text-sm font-semibold text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-danger-surface)] hover:text-[var(--color-danger)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
+          >
+            <LogOut className="h-4 w-4" />
+            Disconnect
+          </button>
         </div>
-      ) : (
-        <div className="mt-8 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-800">
-            Advanced controls
-          </p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            Log in to manage sessions, strategies, automation, and account
-            settings.
-          </p>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -308,9 +354,12 @@ export default function SideNavBar({
   sidebarIsOpen,
   setSidebarIsOpen,
   onOpenCreate,
+  onOpenQuickSettings,
+  returnFocusRef,
 }: SideNavBarProps) {
   const [isUpgrading, setIsUpgrading] = useState(false);
   const { disconnect } = useDisconnect();
+  const drawerRef = useRef<HTMLElement>(null);
 
   const {
     activeSession,
@@ -326,9 +375,7 @@ export default function SideNavBar({
 
   const location = useLocation();
   const navigate = useNavigate();
-
   const network = selectedNetwork as Network;
-
   const activeWalletAddress = useMemo(
     () => getWalletAddress(activeSession, network),
     [activeSession, network]
@@ -336,56 +383,41 @@ export default function SideNavBar({
 
   useEffect(() => {
     setSidebarIsOpen(false);
-  }, [location.pathname, setSidebarIsOpen]);
+  }, [location.hash, location.pathname, setSidebarIsOpen]);
 
   useEffect(() => {
     function handleResize() {
-      if (window.innerWidth >= 1024) {
-        setSidebarIsOpen(false);
-      }
+      if (window.innerWidth >= 1024) setSidebarIsOpen(false);
     }
-
     window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
+    return () => window.removeEventListener("resize", handleResize);
   }, [setSidebarIsOpen]);
 
   useEffect(() => {
-    if (!sidebarIsOpen) {
-      return;
-    }
-
+    if (!sidebarIsOpen) return;
     const previousOverflow = document.body.style.overflow;
+    const returnFocusTarget = returnFocusRef.current;
     document.body.style.overflow = "hidden";
+    window.setTimeout(() => drawerRef.current?.focus(), 0);
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setSidebarIsOpen(false);
-      }
+      if (event.key === "Escape") setSidebarIsOpen(false);
     }
-
     window.addEventListener("keydown", handleEscape);
-
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleEscape);
+      returnFocusTarget?.focus();
     };
-  }, [sidebarIsOpen, setSidebarIsOpen]);
+  }, [returnFocusRef, setSidebarIsOpen, sidebarIsOpen]);
 
   async function upgradeHandler() {
-    if (!activeSession || !activeWalletAddress || isUpgrading) {
-      return;
-    }
-
+    if (!activeSession || !activeWalletAddress || isUpgrading) return;
     const sessionId = uuidv4();
-
     try {
       setIsUpgrading(true);
       setIsTransacting?.(true);
       setSessionId(sessionId);
-
       const signatureOptions = await postRequest(
         "init-sign-transaction",
         {
@@ -396,15 +428,12 @@ export default function SideNavBar({
         },
         activeSession.accessToken
       );
-
       if (!signatureOptions?.options) {
         throw new Error("Unable to prepare the wallet update.");
       }
-
       const signatureData = await startAuthentication({
         optionsJSON: signatureOptions.options,
       });
-
       const transaction = await postRequest(
         "upgrade-wallet-with-sig",
         {
@@ -415,20 +444,14 @@ export default function SideNavBar({
         },
         activeSession.accessToken
       );
-
-      if (!transaction) {
-        throw new Error("The wallet update did not complete.");
-      }
-
+      if (!transaction) throw new Error("The wallet update did not complete.");
       toast.success("Wallet updated successfully.");
       triggerUpdate();
     } catch (error) {
       console.error("[wallet/upgrade]", error);
-
       toast.error(
         error instanceof Error ? error.message : "Unable to update the wallet."
       );
-
       setSessionId("");
     } finally {
       setSessionId("");
@@ -439,28 +462,20 @@ export default function SideNavBar({
 
   async function logoutHandler() {
     try {
-      /*
-       * Disconnect the active wagmi connector/session first.
-       */
       try {
         disconnect();
       } catch (error) {
         console.warn("[wallet/logout/evm-disconnect]", error);
       }
-
       await removeAuthSession();
       await Promise.resolve(removeLocalAuthSession());
-
       setActiveSession(null);
       setTransactionStats(null);
       setSessionId("");
-
       await updateSession();
-
       navigate("/", { replace: true });
     } catch (error) {
       console.error("[wallet/logout]", error);
-
       toast.error(
         error instanceof Error
           ? error.message
@@ -469,54 +484,66 @@ export default function SideNavBar({
     }
   }
 
+  const sidebarContent = (
+    <SidebarNav
+      onClose={() => setSidebarIsOpen(false)}
+      onOpenCreate={onOpenCreate}
+      onOpenQuickSettings={onOpenQuickSettings}
+      onLogout={logoutHandler}
+      onUpgrade={upgradeHandler}
+      isUpgrading={isUpgrading}
+    />
+  );
+
   return (
     <>
       {sidebarIsOpen ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-[210] lg:hidden">
           <button
             type="button"
             aria-label="Close navigation"
             onClick={() => setSidebarIsOpen(false)}
-            className="absolute inset-0 h-full w-full bg-slate-950/45 backdrop-blur-[2px]"
+            className="absolute inset-0 h-full w-full bg-slate-950/50 backdrop-blur-sm"
           />
-
           <aside
+            id="mobile-navigation"
+            ref={drawerRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
-            aria-label="SocketFi navigation"
-            className="absolute inset-y-0 left-0 flex w-[min(88vw,320px)] flex-col bg-white shadow-2xl"
+            aria-labelledby="mobile-navigation-title"
+            onKeyDown={focusTrap}
+            className="absolute inset-y-0 left-0 flex w-[min(88vw,320px)] flex-col bg-[var(--color-surface)] shadow-2xl outline-none motion-reduce:transition-none"
           >
-            <header className="flex h-16 items-center justify-between border-b border-slate-200 px-4">
-              <img src={Logo} alt="SocketFi" className="h-9 w-auto" />
-
+            <header className="flex min-h-16 items-center justify-between border-b border-[var(--color-border-default)] px-4">
+              <div>
+                <img src={Logo} alt="" className="h-8 w-auto" />
+                <h2 id="mobile-navigation-title" className="sr-only">
+                  SocketFi navigation
+                </h2>
+              </div>
               <button
                 type="button"
-                aria-label="Close sidebar"
+                aria-label="Close navigation"
                 onClick={() => setSidebarIsOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-950"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-[var(--radius-control)] border border-[var(--color-border-default)] text-[var(--color-text-secondary)] outline-none hover:bg-[var(--color-surface-subtle)] focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
               >
                 <X className="h-5 w-5" />
               </button>
             </header>
-
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
-              <SidebarNav
-                onClose={() => setSidebarIsOpen(false)}
-                onOpenCreate={onOpenCreate}
-                onLogout={logoutHandler}
-                onUpgrade={upgradeHandler}
-                isUpgrading={isUpgrading}
-              />
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
+              {sidebarContent}
             </div>
           </aside>
         </div>
       ) : null}
 
-      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-slate-200 bg-white lg:flex">
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <aside className="hidden h-dvh w-72 shrink-0 border-r border-[var(--color-border-default)] bg-[var(--color-surface)] lg:flex">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
           <SidebarNav
             onClose={() => undefined}
             onOpenCreate={onOpenCreate}
+            onOpenQuickSettings={onOpenQuickSettings}
             onLogout={logoutHandler}
             onUpgrade={upgradeHandler}
             isUpgrading={isUpgrading}

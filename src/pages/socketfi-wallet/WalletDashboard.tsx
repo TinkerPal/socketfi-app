@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Wallet,
 } from "lucide-react";
+import { useLocation } from "react-router-dom";
 
 import TransactionHistory from "../../components/TransactionHistory";
 import TopStats from "../../components/TopStats";
@@ -132,6 +133,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 
 export default function WalletDashboard() {
   const [showAllTx, setShowAllTx] = useState(false);
+  const location = useLocation();
 
   const { portfolioDetail, selectedNetwork, activeSession, updateData } =
     useStates() as WalletDashboardContext;
@@ -161,6 +163,11 @@ export default function WalletDashboard() {
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (location.hash !== "#activity") return;
+    document.getElementById("activity")?.scrollIntoView({ block: "start" });
+  }, [location.hash]);
 
   useEffect(() => {
     setWalletStats({
@@ -477,7 +484,9 @@ export default function WalletDashboard() {
 
                   <WalletScreen />
 
-                  <TransactionHistory onOpenAll={() => setShowAllTx(true)} />
+                  <div id="activity" className="scroll-mt-6">
+                    <TransactionHistory onOpenAll={() => setShowAllTx(true)} />
+                  </div>
                 </div>
               </div>
             </div>
