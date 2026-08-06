@@ -2,11 +2,79 @@
 @tailwind components;
 @tailwind utilities;
 
-input:focus,
-input:focus-visible {
-  outline: none !important;
+:root {
+  color-scheme: light;
+
+  --color-canvas: #f1f5f9;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
+  --color-text-inverse: #ffffff;
+
+  --color-border-default: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  --color-action-primary: #312e81;
+  --color-action-primary-hover: #3730a3;
+  --color-action-primary-disabled: #a5b4fc;
+
+  --color-success: #047857;
+  --color-success-surface: #ecfdf5;
+  --color-success-border: #a7f3d0;
+  --color-warning: #b45309;
+  --color-warning-surface: #fffbeb;
+  --color-warning-border: #fde68a;
+  --color-danger: #be123c;
+  --color-danger-surface: #fff1f2;
+  --color-danger-border: #fecdd3;
+  --color-information: #1d4ed8;
+  --color-information-surface: #eff6ff;
+  --color-information-border: #bfdbfe;
+
+  --color-focus: #4f46e5;
+
+  --radius-control: 0.75rem;
+  --radius-card: 1rem;
+  --radius-panel: 1.5rem;
+  --radius-pill: 9999px;
+
+  --motion-duration-fast: 120ms;
+  --motion-duration-standard: 200ms;
+}
+
+input:focus {
   box-shadow: none !important;
 }
+
+:focus-visible {
+  outline: 3px solid var(--color-focus) !important;
+  outline-offset: 2px;
+}
+
 body {
-  @apply bg-slate-100;
+  background-color: var(--color-canvas);
+  color: var(--color-text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+  }
 }

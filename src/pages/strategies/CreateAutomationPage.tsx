@@ -1,5 +1,13 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -40,15 +48,28 @@ import {
   approveAutomationPaymentAuthorization,
   signAndSubmitSmartAccountInvocation,
 } from "../../services/automationWalletSigning";
+import {
+  StrategyChooser,
+  STRATEGY_ICONS,
+  STRATEGY_TYPES,
+  type StrategyType,
+} from "./create-automation/StrategyChooser";
+import {
+  DCAForm,
+  DistributionForm,
+  RebalanceForm,
+} from "./create-automation/StrategyForms";
+import {
+  LimitsSection,
+  ScheduleSection,
+} from "./create-automation/ScheduleSections";
+import {
+  AuthorizationPanel,
+  ReviewPanel,
+  SummarySidebar,
+} from "./create-automation/Panels";
 
 type Network = "PUBLIC" | "TESTNET";
-
-type StrategyType =
-  | "DISBURSEMENT"
-  | "DCA"
-  | "REBALANCE"
-  | "AMPLIDEX_LONG"
-  | "AMPLIDEX_SHORT";
 
 type TokenOption = {
   id: string;
@@ -124,44 +145,6 @@ type AutoLayerSchedule = {
   expression: string;
   timezone: "UTC";
 };
-
-const STRATEGY_TYPES: Array<{
-  id: StrategyType;
-  label: string;
-  description: string;
-  accent: string;
-}> = [
-  {
-    id: "DCA",
-    label: "DCA",
-    description: "Buy an asset gradually on a recurring schedule.",
-    accent: "indigo",
-  },
-  {
-    id: "DISBURSEMENT",
-    label: "Disbursement",
-    description: "Send scheduled payments to one or more recipients.",
-    accent: "emerald",
-  },
-  {
-    id: "REBALANCE",
-    label: "Rebalance",
-    description: "Maintain target portfolio allocations automatically.",
-    accent: "violet",
-  },
-  //   {
-  //     id: "AMPLIDEX_LONG",
-  //     label: "Amplidex long",
-  //     description: "Open recurring or scheduled leveraged long positions.",
-  //     accent: "sky",
-  //   },
-  //   {
-  //     id: "AMPLIDEX_SHORT",
-  //     label: "Amplidex short",
-  //     description: "Open recurring or scheduled leveraged short positions.",
-  //     accent: "rose",
-  //   },
-];
 
 const SCHEDULE_UNITS: Array<{
   value: ScheduleUnit;
@@ -732,7 +715,7 @@ function Field({
   hint?: string;
   required?: boolean;
   optional?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <label className="block text-sm font-medium text-[#344054]">
@@ -762,7 +745,7 @@ function SectionHeader({
   title,
   description,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
+  icon: ComponentType<{ className?: string }>;
   title: string;
   description: string;
 }) {
@@ -1169,54 +1152,13 @@ function QuoteCard({
   );
 }
 
-function StrategyTypeCard({
-  active,
-  icon: Icon,
-  title,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={classNames(
-        "rounded-2xl border p-4 text-left transition",
-        active
-          ? "border-[#2F0FD1] bg-[#F4F7FF] shadow-sm"
-          : "border-[#EAECF0] bg-white hover:border-[#D7DDF0] hover:bg-[#FCFCFD]"
-      )}
-    >
-      <div
-        className={classNames(
-          "flex h-10 w-10 items-center justify-center rounded-2xl",
-          active ? "bg-[#2F0FD1] text-white" : "bg-[#EEF2FF] text-[#2F0FD1]"
-        )}
-      >
-        <Icon className="h-5 w-5" />
-      </div>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-[#101828]">{title}</h3>
-        {active ? <Check className="h-4 w-4 text-[#2F0FD1]" /> : null}
-      </div>
-      <p className="mt-1 text-sm leading-6 text-[#667085]">{description}</p>
-    </button>
-  );
-}
-
 function SummaryItem({
   label,
   value,
   mono = false,
 }: {
   label: string;
-  value: React.ReactNode;
+  value: ReactNode;
   mono?: boolean;
 }) {
   return (
@@ -1382,6 +1324,7 @@ export default function CreateAutomationPage() {
   );
 
   const [type, setType] = useState<StrategyType>("DCA");
+  const [strategyChosen, setStrategyChosen] = useState(false);
   const [name, setName] = useState("Daily XLM purchase");
 
   const [repeatEnabled, setRepeatEnabled] = useState(false);
@@ -2423,13 +2366,19 @@ export default function CreateAutomationPage() {
           disabled={Boolean(busyAction)}
           onClick={() =>
             step === 1
-              ? navigate("/automations")
+              ? strategyChosen
+                ? setStrategyChosen(false)
+                : navigate("/automations")
               : setStep((current) => Math.max(1, current - 1))
           }
           className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#EAECF0] bg-white px-4 text-sm font-medium text-[#344054] shadow-sm transition hover:bg-[#F9FAFB] disabled:cursor-not-allowed disabled:opacity-60"
         >
           <ArrowLeft className="h-4 w-4" />
-          {step === 1 ? "Back to automations" : "Previous step"}
+          {step === 1
+            ? strategyChosen
+              ? "Choose another strategy"
+              : "Back to automations"
+            : "Previous step"}
         </button>
 
         <section className="rounded-3xl border border-[#EAECF0] bg-white p-5 shadow-sm">
@@ -2459,7 +2408,9 @@ export default function CreateAutomationPage() {
 
               <h1 className="mt-3 text-2xl font-semibold tracking-tight text-[#101828]">
                 {visualStep === 1
-                  ? "Create automation"
+                  ? strategyChosen
+                    ? "Configure automation"
+                    : "Choose an automation strategy"
                   : visualStep === 2
                   ? "Review automation"
                   : visualStep === 3
@@ -2468,8 +2419,9 @@ export default function CreateAutomationPage() {
               </h1>
 
               <p className="mt-1 max-w-2xl text-sm leading-6 text-[#667085]">
-                Configure a strategy with a limited wallet session, transparent
-                execution limits, and an x402 activation quote.
+                {visualStep === 1 && !strategyChosen
+                  ? "Start with the outcome you want. You’ll configure its schedule, limits, and wallet authorization next."
+                  : "Configure a strategy with a limited wallet session, transparent execution limits, and an x402 activation quote."}
               </p>
             </div>
 
@@ -2550,7 +2502,15 @@ export default function CreateAutomationPage() {
           </div>
         ) : null}
 
-        {step === 1 ? (
+        {step === 1 && !strategyChosen ? (
+          <StrategyChooser
+            onSelect={(selectedStrategy) => {
+              setType(selectedStrategy);
+              setStrategyChosen(true);
+              setError("");
+            }}
+          />
+        ) : step === 1 ? (
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             <form
               onSubmit={(event) => {
@@ -2562,65 +2522,33 @@ export default function CreateAutomationPage() {
               <section className="rounded-2xl border border-[#EAECF0] bg-white p-4">
                 <SectionHeader
                   icon={Zap}
-                  title="Strategy type"
-                  description="Choose the automation you want AutoLayer to run."
+                  title={selectedType?.label || "Strategy"}
+                  description="Your selected strategy. Change it without resetting the configuration you have entered."
                 />
-
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  <StrategyTypeCard
-                    active={type === "DCA"}
-                    icon={RefreshCw}
-                    title="Dollar-cost average"
-                    description="Buy an asset gradually on a recurring schedule."
-                    onClick={() => {
-                      setType("DCA");
-                      setError("");
-                    }}
-                  />
-                  <StrategyTypeCard
-                    active={type === "DISBURSEMENT"}
-                    icon={Coins}
-                    title="Disbursement"
-                    description="Send scheduled payments to one or more recipients."
-                    onClick={() => {
-                      setType("DISBURSEMENT");
-                      setError("");
-                    }}
-                  />
-                  <StrategyTypeCard
-                    active={type === "REBALANCE"}
-                    icon={RefreshCw}
-                    title="Rebalance"
-                    description="Maintain target portfolio allocations automatically."
-                    onClick={() => {
-                      setType("REBALANCE");
-                      setError("");
-                    }}
-                  />
-                  {/* <StrategyTypeCard
-                    active={type === "AMPLIDEX_LONG"}
-                    icon={ArrowRight}
-                    title="Amplidex long"
-                    description="Open a scheduled leveraged long position."
-                    onClick={() => {
-                      setType("AMPLIDEX_LONG");
-                      setError("");
-                    }}
-                  />
-                  <StrategyTypeCard
-                    active={type === "AMPLIDEX_SHORT"}
-                    icon={ArrowLeft}
-                    title="Amplidex short"
-                    description="Open a scheduled leveraged short position."
-                    onClick={() => {
-                      setType("AMPLIDEX_SHORT");
-                      setError("");
-                    }}
-                  /> */}
+                <div className="flex flex-col gap-3 rounded-xl border border-[#D9D6FE] bg-[#F4F3FF] p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#2F0FD1] text-white">
+                      {selectedType ? (() => {
+                        const SelectedIcon = STRATEGY_ICONS[selectedType.id];
+                        return <SelectedIcon className="h-5 w-5" />;
+                      })() : null}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-[#101828]">{selectedType?.label}</p>
+                      <p className="mt-0.5 text-xs text-[#667085]">{selectedType?.description}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStrategyChosen(false)}
+                    className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-xl border border-[#BDB4FE] bg-white px-3.5 text-sm font-semibold text-[#2F0FD1] transition hover:bg-[#EEF2FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2F0FD1]"
+                  >
+                    Change strategy
+                  </button>
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-[#EAECF0] bg-white p-4">
+              <ScheduleSection>
                 <SectionHeader
                   icon={CalendarClock}
                   title="Name and schedule"
@@ -2738,6 +2666,7 @@ export default function CreateAutomationPage() {
                     </>
                   ) : null}
 
+                  <LimitsSection>
                   <Field
                     label="Session duration"
                     hint="How long the delegated account permission remains valid."
@@ -2803,8 +2732,9 @@ export default function CreateAutomationPage() {
                       </div>
                     </Field>
                   )}
+                  </LimitsSection>
                 </div>
-              </section>
+              </ScheduleSection>
 
               <section className="rounded-2xl border border-[#EAECF0] bg-white p-4">
                 <SectionHeader
@@ -2814,7 +2744,7 @@ export default function CreateAutomationPage() {
                 />
 
                 {type === "DCA" ? (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <DCAForm>
                     <TokenSelect
                       label="Spend token"
                       hint="Deducted from the wallet on each run."
@@ -2845,9 +2775,9 @@ export default function CreateAutomationPage() {
                         </span>
                       </div>
                     </Field>
-                  </div>
+                  </DCAForm>
                 ) : type === "DISBURSEMENT" ? (
-                  <div className="space-y-5">
+                  <DistributionForm>
                     <TokenSelect
                       label="Payment token"
                       value={assetIn}
@@ -3049,9 +2979,9 @@ export default function CreateAutomationPage() {
                         ))}
                       </div>
                     </div>
-                  </div>
+                  </DistributionForm>
                 ) : type === "REBALANCE" ? (
-                  <div className="space-y-5">
+                  <RebalanceForm>
                     <AmountInput
                       label="Maximum trade per run"
                       value={amount}
@@ -3167,7 +3097,7 @@ export default function CreateAutomationPage() {
                         ))}
                       </div>
                     </div>
-                  </div>
+                  </RebalanceForm>
                 ) : (
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <Field label="Market" required>
@@ -3278,7 +3208,7 @@ export default function CreateAutomationPage() {
               </div>
             </form>
 
-            <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+            <SummarySidebar>
               <div className="rounded-2xl border border-[#EAECF0] bg-white p-5 shadow-sm">
                 <div className="mb-3 flex items-center gap-2">
                   <Bot className="h-4 w-4 text-[#2F0FD1]" />
@@ -3337,10 +3267,10 @@ export default function CreateAutomationPage() {
                   anything.
                 </p>
               </div>
-            </aside>
+            </SummarySidebar>
           </section>
         ) : step === 2 && proposal ? (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <ReviewPanel>
             <div className="space-y-4">
               <QuoteCard proposal={quote} tokens={tokens} />
 
@@ -3446,7 +3376,7 @@ export default function CreateAutomationPage() {
               </div>
             </div>
 
-            <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+            <SummarySidebar>
               <div className="rounded-2xl border border-[#D1FADF] bg-[#F6FEF9] p-5 shadow-sm">
                 <div className="mb-3 flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-[#027A48]" />
@@ -3487,10 +3417,10 @@ export default function CreateAutomationPage() {
                   />
                 </div>
               </div>
-            </aside>
-          </section>
+            </SummarySidebar>
+          </ReviewPanel>
         ) : proposal ? (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <AuthorizationPanel>
             <div className="space-y-4">
               <section className="rounded-2xl border border-[#D1FADF] bg-[#F6FEF9] p-5 shadow-sm">
                 <CheckCircle2 className="h-6 w-6 text-[#027A48]" />
@@ -3558,7 +3488,7 @@ export default function CreateAutomationPage() {
               </div>
             </div>
 
-            <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+            <SummarySidebar>
               <div className="rounded-2xl border border-[#D1FADF] bg-[#F6FEF9] p-5 shadow-sm">
                 <div className="mb-3 flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-[#027A48]" />
@@ -3597,8 +3527,8 @@ export default function CreateAutomationPage() {
                   />
                 </div>
               </div>
-            </aside>
-          </section>
+            </SummarySidebar>
+          </AuthorizationPanel>
         ) : null}
       </div>
     </main>
