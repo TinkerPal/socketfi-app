@@ -36,7 +36,7 @@ import { postRequest } from "../utils/fetch-functions";
 type Network = "TESTNET" | "PUBLIC";
 
 interface NavigationItem {
-  id: "overview" | "activity" | "dapps" | "automations";
+  id: "overview" | "dapps" | "automations";
   label: string;
   icon: ComponentType<{ className?: string }>;
   link: string;
@@ -65,12 +65,6 @@ const navigationItems: NavigationItem[] = [
     label: "Overview",
     icon: LayoutDashboard,
     link: "/",
-  },
-  {
-    id: "activity",
-    label: "Activity",
-    icon: Activity,
-    link: "/#activity",
   },
   {
     id: "dapps",
@@ -155,10 +149,7 @@ function SidebarNav({
 
   function itemIsActive(item: NavigationItem) {
     if (item.id === "overview") {
-      return location.pathname === "/" && location.hash !== "#activity";
-    }
-    if (item.id === "activity") {
-      return location.pathname === "/" && location.hash === "#activity";
+      return location.pathname === "/";
     }
     if (item.id === "dapps") {
       return location.pathname.startsWith("/dapps");
