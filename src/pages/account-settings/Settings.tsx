@@ -1,81 +1,56 @@
-// @ts-nocheck
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ComponentType } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
-  CheckCircle2,
   KeyRound,
-  LockKeyhole,
   Network,
-  Shield,
   ShieldCheck,
+  SlidersHorizontal,
   UserRoundCheck,
   Wallet,
 } from "lucide-react";
 
+import { Card, PageHeader, Section, StatusBadge } from "../../components/ui";
 import { useStates } from "../../context/StatesContext";
+import { shortenAddress } from "../../utils/formatters";
 import { getAuthSession } from "../../utils/localStorage";
 
-function classNames(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
-function short(value?: string, start = 12, end = 10) {
-  if (!value) return "—";
-  if (value.length <= start + end + 1) return value;
-  return `${value.slice(0, start)}…${value.slice(-end)}`;
-}
-
-function SettingsCard({
-  icon: Icon,
-  title,
-  description,
-  to,
-  tone = "indigo",
-  badge,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
+type SettingsDestinationProps = {
+  icon: ComponentType<{ className?: string }>;
   title: string;
   description: string;
   to: string;
-  tone?: "indigo" | "emerald" | "amber";
-  badge?: string;
-}) {
-  const tones = {
-    indigo: "bg-indigo-50 text-indigo-700 ring-indigo-100",
-    emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-    amber: "bg-amber-50 text-amber-700 ring-amber-100",
-  };
+  actionLabel: string;
+};
 
+function SettingsDestination({
+  actionLabel,
+  description,
+  icon: Icon,
+  title,
+  to,
+}: SettingsDestinationProps) {
   return (
     <Link
       to={to}
-      className="group rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+      className="group rounded-[var(--radius-card)] border border-[var(--color-border-default)] bg-[var(--color-surface)] p-5 shadow-sm outline-none transition hover:border-[var(--color-border-strong)] hover:shadow-md focus-visible:ring-2 focus-visible:ring-[var(--color-action-primary)]"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div
-          className={classNames(
-            "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1",
-            tones[tone]
-          )}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
-
-        {badge ? (
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
-            {badge}
-          </span>
-        ) : null}
+      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--color-information-surface)] text-[var(--color-information)]">
+        <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
-
-      <h2 className="mt-5 text-lg font-semibold text-slate-950">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
-
-      <div className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-        Open settings
-        <ArrowRight className="h-4 w-4 transition group-hover:translate-x-1" />
-      </div>
+      <h3 className="mt-4 text-base font-semibold text-[var(--color-text-primary)]">
+        {title}
+      </h3>
+      <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+        {description}
+      </p>
+      <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[var(--color-action-primary)]">
+        {actionLabel}
+        <ArrowRight
+          className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
+          aria-hidden="true"
+        />
+      </span>
     </Link>
   );
 }
@@ -87,10 +62,9 @@ export default function Settings() {
   const localSession = useMemo(() => getAuthSession(), []);
   const accessToken =
     activeSession?.accessToken || localSession?.accessToken || "";
-  const wallet =
-    activeSession?.userProfile?.address?.[selectedNetwork] ||
-    localSession?.userProfile?.address?.[selectedNetwork] ||
-    "";
+  const profile = activeSession?.userProfile || localSession?.userProfile;
+  const wallet = profile?.address?.[selectedNetwork] || "";
+  const username = profile?.username || "SocketFi account";
 
   useEffect(() => {
     if (!accessToken) navigate("/", { replace: true });
@@ -99,102 +73,111 @@ export default function Settings() {
   if (!accessToken) return null;
 
   return (
-    <main className="mx-auto min-h-screen w-full  space-y-5 px-0 py-4 sm:px-6 md:px-8">
-      <section className="relative overflow-hidden rounded-[28px] border border-slate-200 bg-[linear-gradient(135deg,#f8fafc_0%,#eef2ff_55%,#f8fafc_100%)] p-5 shadow-sm sm:p-7">
-        <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-indigo-200/30 blur-3xl" />
-        <div className="absolute -bottom-20 left-12 h-44 w-44 rounded-full bg-sky-200/20 blur-3xl" />
+    <main className="min-h-screen bg-[var(--color-canvas)]">
+      <div className="mx-auto w-full space-y-8 px-4 py-6 sm:px-6 lg:px-8">
+        <PageHeader
+          eyebrow="Account preferences"
+          title="Settings"
+          description="Review your account and network, manage visible assets, and control automation permissions and account guardians."
+        />
 
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-100 backdrop-blur">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Account security
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Section
+            surface
+            title="Account"
+            description="The SocketFi account currently connected to this application."
+          >
+            <div className="flex items-start gap-3 rounded-[var(--radius-card)] bg-[var(--color-surface-subtle)] p-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-surface)] text-[var(--color-text-secondary)] shadow-sm">
+                <Wallet className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {username}
+                </p>
+                <p
+                  className="mt-1 truncate font-mono text-xs text-[var(--color-text-secondary)]"
+                  title={wallet}
+                >
+                  {shortenAddress(wallet, { start: 12, end: 10 })}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Account connection and disconnect controls remain available in
+                  the main navigation.
+                </p>
+              </div>
             </div>
+          </Section>
 
-            <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
-              Settings
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
-              Manage delegated sessions and recovery guardians for your SocketFi
-              smart account. Every sensitive change requires wallet
-              authorization.
+          <Section
+            surface
+            title="Network and assets"
+            description="See the active network and manage which assets appear in your wallet."
+          >
+            <div className="flex items-start gap-3 rounded-[var(--radius-card)] bg-[var(--color-surface-subtle)] p-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-surface)] text-[var(--color-text-secondary)] shadow-sm">
+                <Network className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    {selectedNetwork === "PUBLIC"
+                      ? "Stellar Mainnet"
+                      : "Stellar Testnet"}
+                  </p>
+                  <StatusBadge tone="information">Current network</StatusBadge>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                  Watched assets, balance refresh, and wallet display preferences
+                  remain in Quick Settings.
+                </p>
+              </div>
+              <SlidersHorizontal
+                className="mt-1 h-4 w-4 shrink-0 text-[var(--color-text-muted)]"
+                aria-hidden="true"
+              />
+            </div>
+          </Section>
+        </div>
+
+        <Section
+          title="Security and permissions"
+          description="Review limited automation access and the trusted accounts that help protect your SocketFi account."
+        >
+          <div className="grid gap-4 lg:grid-cols-2">
+            <SettingsDestination
+              icon={KeyRound}
+              title="Automation permissions"
+              description="Review active, expired, revoked, and invalidated permissions. Inspect allowed actions and limits, or revoke access."
+              to="/settings/sessions"
+              actionLabel="Manage permissions"
+            />
+            <SettingsDestination
+              icon={UserRoundCheck}
+              title="Recovery and guardians"
+              description="Review account guardians, add a trusted address, and manage delayed guardian removal."
+              to="/settings/guardians"
+              actionLabel="Manage guardians"
+            />
+          </div>
+        </Section>
+
+        <Card padding="md" className="flex items-start gap-3">
+          <ShieldCheck
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-success)]"
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              Security changes require authorization
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
+              Revoking permissions and changing guardians require approval from
+              the connected account before they are submitted on-chain.
             </p>
           </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[390px]">
-            <div className="rounded-[20px] border border-white/80 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                <Wallet className="h-4 w-4" />
-                Wallet
-              </div>
-              <p className="mt-2 break-all font-mono text-sm font-semibold text-slate-950">
-                {short(wallet)}
-              </p>
-            </div>
-
-            <div className="rounded-[20px] border border-white/80 bg-white/80 p-4 shadow-sm backdrop-blur">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                <Network className="h-4 w-4" />
-                Network
-              </div>
-              <p className="mt-2 text-sm font-semibold text-slate-950">
-                {selectedNetwork === "PUBLIC"
-                  ? "Stellar Mainnet"
-                  : "Stellar Testnet"}
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <SettingsCard
-          icon={KeyRound}
-          title="Manage sessions"
-          description="Review active delegated policies, inspect permissions and usage, revoke an individual session, or invalidate all existing sessions."
-          to="/settings/sessions"
-          tone="indigo"
-        />
-
-        <SettingsCard
-          icon={UserRoundCheck}
-          title="Manage guardians"
-          description="Add recovery guardians, begin delayed removal, and finalize removal when the contract-defined delay has elapsed."
-          to="/settings/guardians"
-          tone="emerald"
-        />
-      </section>
-
-      <section className="grid gap-4 sm:grid-cols-3">
-        {[
-          {
-            icon: LockKeyhole,
-            title: "Owner-authorized",
-            text: "Session revocation and guardian administration require account-owner authorization.",
-          },
-          {
-            icon: Shield,
-            title: "Scoped access",
-            text: "Delegated sessions are limited by expiry, usage count, allowed calls, and spend policy.",
-          },
-          {
-            icon: CheckCircle2,
-            title: "On-chain state",
-            text: "Security changes are submitted to the SocketFi account contract and recorded by the indexer.",
-          },
-        ].map(({ icon: Icon, title, text }) => (
-          <div
-            key={title}
-            className="rounded-[22px] border border-slate-200 bg-white p-5 shadow-sm"
-          >
-            <Icon className="h-5 w-5 text-slate-400" />
-            <h3 className="mt-4 text-sm font-semibold text-slate-950">
-              {title}
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-500">{text}</p>
-          </div>
-        ))}
-      </section>
+        </Card>
+      </div>
     </main>
   );
 }
