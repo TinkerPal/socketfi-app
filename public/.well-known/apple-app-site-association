@@ -1,7 +1,8 @@
 {
   "webcredentials": {
     "apps": [
-      "GC29BX444D.app.socket.fi"
+      "GC29BX444D.app.socket.fi",
+      "GC29BX444D.io.paktly.app"
     ]
   }
 }
